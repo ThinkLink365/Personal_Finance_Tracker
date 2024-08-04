@@ -9,7 +9,7 @@ import webbrowser
 import ctypes
 
 # Set the application user model ID for Windows
-myappid = 'personal.finance.tracker'  # Change this to a unique string for your application
+myappid = 'personal.finance.tracker'
 ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(myappid)
 
 SAVED_CSVS_FILE = 'saved_csvs.json'
@@ -24,11 +24,9 @@ def save_csv_content(file_path, name):
     if not os.path.exists(CSV_STORAGE_DIR):
         os.makedirs(CSV_STORAGE_DIR)
 
-    # Copy the CSV file to the dedicated storage directory
     new_file_path = os.path.join(CSV_STORAGE_DIR, f"{name}.csv")
     shutil.copy(file_path, new_file_path)
 
-    # Save the metadata (custom name and file name) to the JSON file
     if not os.path.exists(SAVED_CSVS_FILE):
         with open(SAVED_CSVS_FILE, 'w') as f:
             json.dump({}, f)
@@ -66,15 +64,20 @@ def delete_saved_csv(name):
         try:
             data = json.load(f)
             if name in data:
-                # Remove the CSV file from storage
                 os.remove(data[name])
-                # Remove the metadata entry
                 del data[name]
                 f.seek(0)
                 f.truncate()
                 json.dump(data, f)
         except json.JSONDecodeError:
             pass
+
+
+def save_csv(file_path):
+    name = simpledialog.askstring("Save CSV", "Enter a name for the CSV:")
+    if name:
+        save_csv_content(file_path, name)
+        messagebox.showinfo("Saved", f"CSV saved as '{name}'.")
 
 
 class CSVViewerApp:
@@ -93,37 +96,37 @@ class CSVViewerApp:
         self.back_button = None
         self.save_button = None
         self.saved_csvs_frame = None
+        self.csv_listbox = None
+        self.delete_button = None
+        self.view_button = None
+        self.browse_button = None
         self.root = root
         self.root.title("Personal Finance Tracker")
         self.root.attributes('-fullscreen', True)
         self.root.iconbitmap('favicon.ico')
-        ctk.set_appearance_mode("System")  # Modes: "System" (default), "Dark", "Light"
-        ctk.set_default_color_theme("blue")  # Themes: "blue" (default), "green", "dark-blue")
+        ctk.set_appearance_mode("System")
+        ctk.set_default_color_theme("blue")
         self.create_widgets()
 
     def create_widgets(self):
-        # Clear existing widgets
         for widget in self.root.winfo_children():
             widget.destroy()
 
-        # Create a menu bar using tkinter
         self.menu_bar = Menu(self.root)
         self.root.configure(menu=self.menu_bar)
 
-        # Add static text to the application
         self.title_label = ctk.CTkLabel(self.root, text="Welcome to the Personal Finance Tracker",
                                         font=("Helvetica", 30, "bold"))
         self.title_label.pack(pady=10)
 
-        self.subtitle_label = ctk.CTkLabel(self.root, text="Please select a CSV File to be loaded",
+        self.subtitle_label = ctk.CTkLabel(self.root, text="Please select CSV files to be loaded",
                                            font=("Helvetica", 20, "bold"))
         self.subtitle_label.pack(pady=10)
 
-        # Frame for buttons
         self.button_frame = ctk.CTkFrame(self.root)
         self.button_frame.pack(pady=10)
 
-        self.load_button = ctk.CTkButton(self.button_frame, text="Load CSV", command=self.load_csv)
+        self.load_button = ctk.CTkButton(self.button_frame, text="Load CSVs", command=self.load_csv)
         self.load_button.grid(row=0, column=0, padx=0, pady=10)
 
         self.saved_csvs_button = ctk.CTkButton(self.button_frame, text="Saved CSVs", command=self.show_saved_csvs)
@@ -137,24 +140,11 @@ class CSVViewerApp:
         self.button_frame.grid_columnconfigure(2, weight=1)
         self.button_frame.place(relx=0.5, rely=0.5, anchor='center')
 
-        # Footer with clickable URL
         self.footer_label = ctk.CTkLabel(self.root, text="© Liam Ó Dubhgáin | Click here to contact me",
                                          font=("Helvetica", 20, "bold"), cursor="hand2")
         self.footer_label.pack(pady=10)
         self.footer_label.place(relx=0.5, rely=1.0, anchor=S)
         self.footer_label.bind("<Button-1>", lambda e: open_website("https://thinklink365.com/"))
-
-    def load_csv(self):
-        # Open file dialog to select CSV file
-        file_path = filedialog.askopenfilename(filetypes=[("CSV files", "*.csv")])
-        if file_path:
-            try:
-                # Read CSV file into DataFrame
-                df = pd.read_csv(file_path)
-                # Display DataFrame content in the same window
-                self.display_csv(df, file_path)
-            except Exception as e:
-                messagebox.showerror("Error", f"Failed to load CSV file: {e}")
 
     def show_saved_csvs(self):
         # Clear existing widgets
@@ -196,12 +186,64 @@ class CSVViewerApp:
         try:
             # Read CSV file into DataFrame
             df = pd.read_csv(file_path)
-            # Display DataFrame content in the same window
-            self.display_csv(df, file_path)
+            # Process and display CSV content
+            self.process_csv(df, file_path)
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load CSV file: {e}")
 
-    def display_csv(self, df, file_path):
+    def load_csv(self):
+        file_paths = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv")])
+        if file_paths:
+            for file_path in file_paths:
+                try:
+                    df = pd.read_csv(file_path)
+                    self.process_csv(df, file_path)
+                except Exception as e:
+                    messagebox.showerror("Error", f"Failed to load CSV file '{file_path}': {e}")
+
+    def process_csv(self, df, file_path):
+        print("Initial DataFrame:")
+        print(df.head())
+        print(df.columns)
+
+        if 'Amount' in df.columns:
+            # Ensure the required columns are present or provide default values
+            required_columns = ['Started Date', 'Description', 'Amount', 'Balance']
+            for col in required_columns:
+                if col not in df.columns:
+                    df[col] = '' if col != 'Amount' else 0
+
+            # Select only the necessary columns
+            df = df[required_columns]
+
+            # Apply logic for Debit and Credit columns
+            df.loc[:, 'Debit'] = df.apply(lambda row: row['Amount'] if row['Amount'] < 0 else 0, axis=1)
+            df.loc[:, 'Credit'] = df.apply(lambda row: row['Amount'] if row['Amount'] > 0 else 0, axis=1)
+
+        elif 'Debit Amount' in df.columns and 'Credit Amount' in df.columns:
+            # Ensure the required columns are present or provide default values
+            required_columns = ['Posted Transactions Date', 'Description1', 'Debit Amount', 'Credit Amount', 'Balance']
+            for col in required_columns:
+                if col not in df.columns:
+                    df[col] = '' if col not in ['Debit Amount', 'Credit Amount'] else 0
+
+            # Select only the necessary columns
+            df = df[required_columns]
+            df.loc[:, 'Debit'] = df['Debit Amount']
+            df.loc[:, 'Credit'] = df['Credit Amount']
+            df.rename(columns={'Posted Transactions Date': 'Started Date', 'Description1': 'Description'}, inplace=True)
+
+
+        else:
+            messagebox.showerror("Error", "CSV file must contain 'Amount' column or both 'Debit Amount' and 'Credit Amount' columns.")
+            return
+
+        debits_df = df[df['Debit'] != 0]
+        credits_df = df[df['Credit'] != 0]
+
+        self.display_csv(debits_df, credits_df, file_path)
+
+    def display_csv(self, debits_df, credits_df, file_path):
         # Clear existing widgets
         for widget in self.root.winfo_children():
             widget.destroy()
@@ -211,30 +253,32 @@ class CSVViewerApp:
         self.csv_frame.pack(padx=10, pady=10, expand=True, fill=ctk.BOTH)
 
         text_area = Text(self.csv_frame, wrap=WORD, font=("Courier New", 10))
-        text_area.insert(END, df.to_string())
+
+        text_area.insert(END, "Debits:\n")
+        if not debits_df.empty:
+            text_area.insert(END, debits_df[['Started Date', 'Description', 'Debit', 'Balance']].to_string(index=False))
+        else:
+            text_area.insert(END, "No debits found.\n")
+
+        text_area.insert(END, "\nCredits:\n")
+        if not credits_df.empty:
+            text_area.insert(END, credits_df[['Started Date', 'Description', 'Credit', 'Balance']].to_string(index=False))
+        else:
+            text_area.insert(END, "No credits found.\n")
+
         text_area.pack(padx=10, pady=10, expand=True, fill=BOTH)
 
         # Add a "Save CSV" button to save the CSV with a custom name
-        self.save_button = ctk.CTkButton(self.root, text="Save CSV", command=lambda: self.save_csv(file_path))
+        self.save_button = ctk.CTkButton(self.root, text="Save CSV", command=lambda: save_csv(file_path))
         self.save_button.pack(pady=10)
 
         # Add a "Back" button to return to the main menu
         self.back_button = ctk.CTkButton(self.root, text="Back", command=self.create_widgets)
         self.back_button.pack(pady=10)
 
-        # Add an "Exit" button in the CSV display view
-        self.exit_button = ctk.CTkButton(self.root, text="Exit", command=self.confirm_exit)
-        self.exit_button.pack(pady=10)
-
-    def save_csv(self, file_path):
-        name = simpledialog.askstring("Save CSV", "Enter a name for the CSV:")
-        if name:
-            save_csv_content(file_path, name)
-            messagebox.showinfo("Save CSV", f"CSV saved as '{name}'.")
-
     def confirm_exit(self):
         if messagebox.askokcancel("Exit", "Do you really want to exit?"):
-            self.root.destroy()
+            self.root.quit()
 
 
 if __name__ == "__main__":
