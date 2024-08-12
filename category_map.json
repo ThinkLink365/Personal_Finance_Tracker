@@ -1,0 +1,107 @@
+{
+    "groceries": [
+        "supervalu",
+        "lidl",
+        "tesco",
+        "dunnes stores",
+        "aldi",
+        "eurospar",
+        "marks & spencer",
+        "centra",
+        "spar",
+        "gala",
+        "mace",
+        "daybreak",
+        "londis",
+        "costcutter",
+        "circle k",
+        "euro giant",
+        "go pluz",
+        "munster technological university",
+        "the cit student services company",
+        "kilmoney stores"
+    ],
+    "entertainment": [
+        "movie",
+        "theater",
+        "concert",
+        "game",
+        "show",
+        "cinema",
+        "omniplex",
+        "ticketmaster",
+        "nintendo",
+        "steam",
+        "gaa",
+        "cdkeys"
+    ],
+    "restaurants": [
+        "restaurant",
+        "cafe",
+        "diner",
+        "bistro",
+        "bar",
+        "mcdonald's",
+        "nando's",
+        "o'brien's",
+        "pizza hut",
+        "abrakebabra",
+        "apache pizza",
+        "burger king",
+        "domino's",
+        "four star",
+        "kfc",
+        "papa johns",
+        "subway",
+        "supermac's"
+    ],
+    "shopping": [
+        "penneys",
+        "life style sports",
+        "next",
+        "smyths",
+        "tk maxx",
+        "pharmacy",
+        "eason",
+        "waterstones",
+        "currys"
+    ],
+    "salary": [
+        "salary",
+        "paycheck",
+        "wages",
+        "income",
+        "top-up",
+        "superv"
+    ],
+    "transfers": [
+        "transfer",
+        "deposit",
+        "withdrawal",
+        "to",
+        "revolut",
+        "from"
+    ],
+    "transport": [
+        "taxi",
+        "bus",
+        "train",
+        "uber",
+        "lyft",
+        "tfi",
+        "bus eireann",
+        "west cork connect",
+        "irish rail",
+        "citylink"
+    ],
+    "refund": [
+        "refund",
+        "rebate",
+        "reimbursement"
+    ],
+    "rewards": [
+        "reward",
+        "cashback",
+        "points"
+    ]
+}
