@@ -1,12 +1,19 @@
+# ui.py
+
 import uuid
+from tkinter import filedialog, messagebox, simpledialog, ttk, BooleanVar
 
 import customtkinter as ctk
-from tkinter import Menu, filedialog, messagebox, simpledialog, ttk, BooleanVar
 import pandas as pd
 from matplotlib import pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
-from Utilises import categorize, save_csv_content, load_saved_csvs, delete_saved_csv, add_keyword_to_category, \
-    delete_category, delete_keyword_from_category, open_website, load_category_map
+
+from CSV_handler import process_csv
+from Utilises import open_website
+from categories import manage_categories
+from functionality import calculate_summary, load_saved_csvs, delete_saved_csv, save_csv
+from compare import execute_csv_comparison, create_comparison_results, create_comparison_summary, \
+    initiate_csv_selection, append_csv_for_comparison, retrieve_csv_data
 
 
 def display_summary(summary_data, summary_frame):
@@ -112,23 +119,102 @@ def display_summary(summary_data, summary_frame):
         total_made_label.pack(anchor="center")
 
 
+def display_summary_statistics(frame, summary_data, file_label, is_credit=False):
+    """
+    Helper function to display the summary statistics for debits or credits in a given frame.
+
+    Parameters:
+    frame (CTkFrame): The frame where the summary statistics should be displayed.
+    summary_data (dict): The summary data to display.
+    file_label (str): The label to indicate which file the data belongs to.
+    is_credit (bool): Whether the data being displayed is for credits or debits.
+    """
+    total_text = "Total Earned" if is_credit else "Total Spent"
+    min_text = "Smallest Transaction"
+    max_text = "Biggest Transaction"
+    most_expensive_text = "Most Profitable Category" if is_credit else "Most Expensive Category"
+    least_expensive_text = "Least Profitable Category" if is_credit else "Least Expensive Category"
+
+    total_label = ctk.CTkLabel(
+        frame,
+        text=(
+            f"{total_text} ({file_label}): "
+            f"{summary_data.get('total_spent', 'N/A') if not is_credit else summary_data.get('total_made', 'N/A')}"
+        ),
+        font=("Helvetica", 20)
+    )
+
+    total_label.pack(anchor="w", padx=10, pady=5)
+
+    min_label = ctk.CTkLabel(frame,
+                             text=f"{min_text} ({file_label}): {summary_data.get('overall_min', 'N/A')}",
+                             font=("Helvetica", 20))
+    min_label.pack(anchor="w", padx=10, pady=5)
+
+    max_label = ctk.CTkLabel(frame,
+                             text=f"{max_text} ({file_label}): {summary_data.get('overall_max', 'N/A')}",
+                             font=("Helvetica", 20))
+    max_label.pack(anchor="w", padx=10, pady=5)
+
+    # Safely get most_expensive and least_expensive categories
+    most_expensive_category = summary_data.get('most_expensive') if not is_credit else summary_data.get(
+        'most_profitable')
+    if most_expensive_category is not None and not most_expensive_category.empty:
+        most_expensive_category_name = most_expensive_category.get('Category', 'N/A')
+        most_expensive_total = most_expensive_category.get('total_spending',
+                                                           'N/A') if not is_credit else most_expensive_category.get(
+            'total_earnings', 'N/A')
+    else:
+        most_expensive_category_name = 'N/A'
+        most_expensive_total = 'N/A'
+
+    most_expensive_label = ctk.CTkLabel(frame,
+                                        text=f"{most_expensive_text} ({file_label}): {most_expensive_category_name} - "
+                                             f"{most_expensive_total}",
+                                        font=("Helvetica", 20))
+    most_expensive_label.pack(anchor="w", padx=10, pady=5)
+
+    least_expensive_category = summary_data.get('least_expensive') if not is_credit else summary_data.get(
+        'least_profitable')
+    if least_expensive_category is not None and not least_expensive_category.empty:
+        least_expensive_category_name = least_expensive_category.get('Category', 'N/A')
+        least_expensive_total = least_expensive_category.get('total_spending',
+                                                             'N/A') if not is_credit else least_expensive_category.get(
+            'total_earnings', 'N/A')
+    else:
+        least_expensive_category_name = 'N/A'
+        least_expensive_total = 'N/A'
+
+    least_expensive_label = ctk.CTkLabel(frame,
+                                         text=f"{least_expensive_text} ({file_label}): {least_expensive_category_name}"
+                                              f" - {least_expensive_total}",
+                                         font=("Helvetica", 20))
+    least_expensive_label.pack(anchor="w", padx=10, pady=5)
+
+
 class CSVViewerApp:
     def __init__(self, root):
+
+        self.credits_df = None
+        self.debits_df = None
         self.root = root
         self.root.title("Personal Finance Tracker")
         self.root.attributes('-fullscreen', True)
         self.root.iconbitmap('favicon.ico')
         ctk.set_appearance_mode("System")
         ctk.set_default_color_theme("blue")
+        self.excluded_transactions = []
+        self.selected_csvs = []
+        self.df = None
+        self.debits_tree = None
+        self.credits_tree = None
         self.create_widgets()
-        self.excluded_transactions = []  # To track excluded transactions
-        self.df = None  # Initialize self.df
 
     def create_widgets(self):
+        """
+        Creates the initial UI widgets, including the menu and buttons.
+        """
         self.clear_widgets()
-
-        self.menu_bar = Menu(self.root)
-        self.root.configure(menu=self.menu_bar)
 
         self.title_label = ctk.CTkLabel(self.root, text="Welcome to the Personal Finance Tracker",
                                         font=("Helvetica", 30, "bold"))
@@ -142,7 +228,7 @@ class CSVViewerApp:
         self.button_frame.pack(pady=10)
 
         self.load_button = ctk.CTkButton(self.button_frame, text="Load CSVs", command=self.load_csv)
-        self.load_button.grid(row=0, column=0, padx=0, pady=10)
+        self.load_button.grid(row=0, column=0, padx=20, pady=10)
 
         self.saved_csvs_button = ctk.CTkButton(self.button_frame, text="Saved CSVs", command=self.show_saved_csvs)
         self.saved_csvs_button.grid(row=1, column=0, padx=20, pady=10)
@@ -150,6 +236,10 @@ class CSVViewerApp:
         self.manage_categories_button = ctk.CTkButton(self.button_frame, text="Manage Categories",
                                                       command=self.manage_categories)
         self.manage_categories_button.grid(row=2, column=0, padx=20, pady=10)
+
+        self.compare_csvs_button = ctk.CTkButton(self.button_frame, text="Compare CSVs",
+                                                 command=self.select_csvs_for_comparison)
+        self.compare_csvs_button.grid(row=3, column=0, padx=20, pady=10)
 
         self.exit_button = ctk.CTkButton(self.button_frame, text="Exit", command=self.confirm_exit)
         self.exit_button.grid(row=4, column=0, padx=20, pady=10)
@@ -166,101 +256,11 @@ class CSVViewerApp:
         self.footer_label.bind("<Button-1>", lambda e: open_website("https://thinklink365.com/"))
 
     def clear_widgets(self):
+        """
+        Clears all widgets from the root window.
+        """
         for widget in self.root.winfo_children():
             widget.destroy()
-
-    def manage_categories(self):
-        self.clear_widgets()
-        category_map = load_category_map()
-
-        self.manage_frame = ctk.CTkFrame(self.root)
-        self.manage_frame.pack(padx=10, pady=10, expand=True, fill=ctk.BOTH)
-
-        scrollable_frame = ctk.CTkScrollableFrame(self.manage_frame)
-        scrollable_frame.pack(padx=10, pady=10, expand=True, fill=ctk.BOTH)
-
-        for category, keywords in category_map.items():
-            frame = ctk.CTkFrame(scrollable_frame)
-            frame.pack(pady=5, padx=10, fill='x')
-
-            category_label = ctk.CTkLabel(frame, text=category.capitalize(), font=("Helvetica", 16, "bold"))
-            category_label.pack(side=ctk.LEFT, padx=10, pady=5)
-
-            delete_category_button = ctk.CTkButton(frame, text="Delete Category",
-                                                   command=lambda c=category: self.delete_category(c),
-                                                   corner_radius=8)
-            delete_category_button.pack(side=ctk.RIGHT, padx=10, pady=5)
-
-            keyword_var = ctk.StringVar(value="Select keyword")
-            keyword_combobox = ttk.Combobox(frame, textvariable=keyword_var, values=keywords, state="readonly")
-            keyword_combobox.pack(side=ctk.LEFT, padx=15, pady=5)
-
-            keyword_combobox.bind("<<ComboboxSelected>>",
-                                  lambda event, kw_var=keyword_var, combobox=keyword_combobox: kw_var.set(
-                                      combobox.get()))
-
-            delete_keyword_button = ctk.CTkButton(
-                frame,
-                text="Delete Keyword",
-                command=lambda c=category, kw_var=keyword_var: self.delete_keyword(c, kw_var.get()),
-                corner_radius=8
-            )
-            delete_keyword_button.pack(side=ctk.RIGHT, padx=10, pady=5)
-
-        add_frame = ctk.CTkFrame(scrollable_frame)
-        add_frame.pack(pady=10, padx=10, fill='x')
-
-        new_category_label = ctk.CTkLabel(add_frame, text="New Category:", font=("Helvetica", 14))
-        new_category_label.pack(side=ctk.LEFT, padx=5, pady=5)
-
-        new_category_entry = ctk.CTkEntry(add_frame)
-        new_category_entry.pack(side=ctk.LEFT, padx=5, pady=5)
-
-        new_keyword_label = ctk.CTkLabel(add_frame, text="New Keyword:", font=("Helvetica", 14))
-        new_keyword_label.pack(side=ctk.LEFT, padx=5, pady=5)
-
-        new_keyword_entry = ctk.CTkEntry(add_frame)
-        new_keyword_entry.pack(side=ctk.LEFT, padx=5, pady=5)
-
-        add_keyword_button = ctk.CTkButton(add_frame, text="Add Keyword",
-                                           command=lambda: self.add_keyword(new_category_entry.get(),
-                                                                            new_keyword_entry.get()),
-                                           corner_radius=8)
-        add_keyword_button.pack(side=ctk.LEFT, padx=10, pady=5)
-
-        self.back_button = ctk.CTkButton(self.manage_frame, text="Back", command=self.create_widgets, corner_radius=8)
-        self.back_button.pack(pady=15)
-
-    def add_keyword(self, category, keyword):
-        category = category.lower().strip()
-        keyword = keyword.lower().strip()
-
-        if not category or not keyword:
-            messagebox.showerror("Error", "Both category and keyword must be non-empty.")
-            return
-
-        success = add_keyword_to_category(category, keyword)
-        if success:
-            self.manage_categories()
-        else:
-            messagebox.showinfo("Info", f"The keyword '{keyword}' already exists in category '{category}'.")
-
-    def delete_category(self, category):
-        if messagebox.askokcancel("Delete Category", f"Do you really want to delete the category '{category}'?"):
-            success = delete_category(category)
-            if success:
-                self.manage_categories()
-
-    def delete_keyword(self, category, keyword):
-        if not keyword or keyword == "Select keyword":
-            messagebox.showerror("Error", "Please select a valid keyword to delete.")
-            return
-
-        success = delete_keyword_from_category(category, keyword)
-        if success:
-            self.manage_categories()
-        else:
-            messagebox.showerror("Error", f"The keyword '{keyword}' does not exist in the category '{category}'.")
 
     def load_csv(self):
         file_paths = filedialog.askopenfilenames(filetypes=[("CSV files", "*.csv")])
@@ -268,159 +268,26 @@ class CSVViewerApp:
             for file_path in file_paths:
                 try:
                     df = pd.read_csv(file_path)
-                    self.process_csv(df, file_path)
+                    debits_df, credits_df, processed_df = process_csv(self, df)
+                    if processed_df is not None:
+                        self.df = processed_df  # Ensure self.df is set
+                        self.show_text_frame(debits_df, credits_df, self.df, file_path)
+                        self.update_totals_frame()  # Call after self.df is set
+                    else:
+                        messagebox.showerror("Error", "Failed to process CSV file.")
                 except Exception as e:
                     messagebox.showerror("Error", f"Failed to load CSV file '{file_path}': {e}")
 
-    def process_csv(self, df, file_path):
-        if 'Amount' in df.columns:
-            required_columns = ['Started Date', 'Description', 'Amount', 'Balance']
-            for col in required_columns:
-                if col not in df.columns:
-                    df[col] = '' if col != 'Amount' else 0
-            df = df[required_columns]
-            df['Debit'] = df.apply(lambda row: row['Amount'] if row['Amount'] < 0 else None, axis=1)
-            df['Credit'] = df.apply(lambda row: row['Amount'] if row['Amount'] > 0 else None, axis=1)
-            df['Category'] = df.apply(lambda row: categorize(row['Description']), axis=1)
-
-            debits_df = df[df['Debit'].notna()].copy()
-            credits_df = df[df['Credit'].notna()].copy()
-
-        elif 'Debit Amount' in df.columns and 'Credit Amount' in df.columns:
-            required_columns = ['Posted Transactions Date', 'Description1', 'Debit Amount', 'Credit Amount', 'Balance']
-            for col in required_columns:
-                if col not in df.columns:
-                    df[col] = '' if col not in ['Debit Amount', 'Credit Amount'] else 0
-            df = df.loc[:, required_columns]
-            df['Debit'] = df['Debit Amount']
-            df['Credit'] = df['Credit Amount']
-            df['Category'] = df.apply(lambda row: categorize(row['Description1']), axis=1)
-            df.rename(columns={'Posted Transactions Date': 'Started Date', 'Description1': 'Description'}, inplace=True)
-
-            debits_df = df[(df['Debit'].notna()) & (df['Credit'].isna())].copy()
-            credits_df = df[(df['Credit'].notna()) & (df['Debit'].isna())].copy()
-
-        elif 'Debit' in df.columns and 'Credit' in df.columns:
-            required_columns = ['Date', 'Details', 'Debit', 'Credit', 'Balance']
-            for col in required_columns:
-                if col not in df.columns:
-                    df[col] = '' if col not in ['Debit', 'Credit', 'Balance'] else 0
-            df = df.loc[:, required_columns]
-            df['Category'] = df.apply(lambda row: categorize(row['Details']), axis=1)
-            df.rename(columns={'Date': 'Started Date', 'Details': 'Description'}, inplace=True)
-
-            debits_df = df[(df['Debit'].notna()) & (df['Credit'].isna())].copy()
-            credits_df = df[(df['Credit'].notna()) & (df['Debit'].isna())].copy()
-
-        else:
-            messagebox.showerror("Error",
-                                 "CSV file must contain 'Amount' column or both 'Debit Amount' and 'Credit Amount' "
-                                 "columns.")
-            return
-
-        self.df = df
-        self.show_text_frame(debits_df, credits_df, df, file_path)
-
-    def calculate_summary(self, debits_df, credits_df):
-        # Filter out excluded transactions
-        excluded_set = set(tuple(t) for t in self.excluded_transactions)
-
-        filtered_debits_df = debits_df[~debits_df.apply(
-            lambda row: (row['Started Date'], row['Description'], 'Debit') in excluded_set, axis=1)]
-        filtered_credits_df = credits_df[~credits_df.apply(
-            lambda row: (row['Started Date'], row['Description'], 'Credit') in excluded_set, axis=1)]
-
-        # Debit summary calculation with absolute values
-        debit_summary = filtered_debits_df.groupby('Category').agg(
-            total_spending=('Debit', lambda x: round(abs(x.sum()), 2)),
-            min_transaction=('Debit', lambda x: round(x.abs().min(), 2)),
-            max_transaction=('Debit', lambda x: round(x.abs().max(), 2)),
-            avg_transaction=('Debit', lambda x: round(x.abs().mean(), 2))
-        ).reset_index()
-
-        overall_min_debit = abs(filtered_debits_df['Debit']).min() if not filtered_debits_df.empty else None
-        overall_max_debit = abs(filtered_debits_df['Debit']).max() if not filtered_debits_df.empty else None
-        total_spent = abs(filtered_debits_df['Debit']).sum() if not filtered_debits_df.empty else 0
-
-        if not debit_summary.empty:
-            debit_summary['Absolute Debit'] = debit_summary['total_spending']
-            most_expensive_debit_category = debit_summary.loc[debit_summary['Absolute Debit'].idxmax()]
-            least_expensive_debit_category = debit_summary.loc[debit_summary['Absolute Debit'].idxmin()]
-        else:
-            most_expensive_debit_category = None
-            least_expensive_debit_category = None
-
-        # Credit summary calculation with absolute values
-        credit_summary = filtered_credits_df.groupby('Category').agg(
-            total_income=('Credit', lambda x: round(x.sum(), 2)),
-            min_transaction=('Credit', lambda x: round(x.abs().min(), 2)),
-            max_transaction=('Credit', lambda x: round(x.abs().max(), 2)),
-            avg_transaction=('Credit', lambda x: round(x.abs().mean(), 2))
-        ).reset_index()
-
-        overall_min_credit = filtered_credits_df['Credit'].abs().min() if not filtered_credits_df.empty else None
-        overall_max_credit = filtered_credits_df['Credit'].abs().max() if not filtered_credits_df.empty else None
-        total_made = filtered_credits_df['Credit'].sum() if not filtered_credits_df.empty else 0
-
-        if not credit_summary.empty:
-            most_profitable_credit_category = credit_summary.loc[credit_summary['total_income'].idxmax()]
-            least_profitable_credit_category = credit_summary.loc[credit_summary['total_income'].idxmin()]
-        else:
-            most_profitable_credit_category = None
-            least_profitable_credit_category = None
-
-        return {
-            'debits': {
-                'summary': debit_summary,
-                'overall_min': overall_min_debit,
-                'overall_max': overall_max_debit,
-                'total_spent': total_spent,
-                'most_expensive': most_expensive_debit_category,
-                'least_expensive': least_expensive_debit_category
-            },
-            'credits': {
-                'summary': credit_summary,
-                'overall_min': overall_min_credit,
-                'overall_max': overall_max_credit,
-                'total_made': total_made,
-                'most_profitable': most_profitable_credit_category,
-                'least_profitable': least_profitable_credit_category
-            }
-        }
-
-    def show_spending_summary(self, debits_df, credits_df):
-        self.clear_widgets()
-
-        summary_frame = ctk.CTkFrame(self.root)
-        summary_frame.pack(padx=20, pady=20, expand=True, fill=ctk.BOTH)
-
-        # Title
-        title_label = ctk.CTkLabel(summary_frame, text="Spending & Income Summary",
-                                   font=("Helvetica", 40, "bold"), anchor="center")
-        title_label.grid(row=0, column=0, columnspan=2, pady=20)
-
-        # Calculate the summary
-        summary_data = self.calculate_summary(debits_df, credits_df)
-
-        # Display the summary
-        display_summary(summary_data, summary_frame)
-
-        # Buttons
-        button_frame = ctk.CTkFrame(summary_frame)
-        button_frame.grid(row=2, column=0, columnspan=2, pady=20)
-
-        self.back_button = ctk.CTkButton(button_frame, text="Back", font=("Helvetica", 18),
-                                         command=lambda: self.show_text_frame(debits_df, credits_df, self.df, ""))
-        self.back_button.pack(pady=10, side=ctk.LEFT)
-
-        # Make sure both columns expand equally to fill the screen
-        summary_frame.grid_columnconfigure(0, weight=1)
-        summary_frame.grid_columnconfigure(1, weight=1)
-
-        # Make sure the row with the frames expands to fill the available vertical space
-        summary_frame.grid_rowconfigure(1, weight=1)
-
     def show_text_frame(self, debits_df, credits_df, df, file_path):
+        """
+        Displays the main text frame with debits and credits data side by side.
+
+        Parameters:
+        debits_df (DataFrame): DataFrame containing debit transactions.
+        credits_df (DataFrame): DataFrame containing credit transactions.
+        df (DataFrame): The original DataFrame.
+        file_path (str): The path to the CSV file.
+        """
         self.clear_widgets()
 
         self.table_frame = ctk.CTkFrame(self.root)
@@ -429,19 +296,14 @@ class CSVViewerApp:
         notebook = ttk.Notebook(self.table_frame)
         notebook.pack(padx=10, pady=10, expand=True, fill=ctk.BOTH)
 
-        debits_copy = debits_df.copy()
-        credits_copy = credits_df.copy()
-
         debits_frame = ttk.Frame(notebook)
         credits_frame = ttk.Frame(notebook)
 
         notebook.add(debits_frame, text="Debits")
         notebook.add(credits_frame, text="Credits")
 
-        self.create_table(debits_frame, debits_copy, "Debits")
-        self.create_table(credits_frame, credits_copy, "Credits")
-
-        self.update_totals_frame()
+        self.create_table(debits_frame, debits_df, "Debits")
+        self.create_table(credits_frame, credits_df, "Credits")
 
         self.switch_to_graph_button = ctk.CTkButton(self.table_frame, text="Show Graphs",
                                                     command=lambda: self.show_graph_frame(debits_df, credits_df, df,
@@ -452,23 +314,27 @@ class CSVViewerApp:
                                                  command=lambda: self.show_spending_summary(debits_df, credits_df))
         self.show_summary_button.pack(pady=10)
 
-        self.save_button = ctk.CTkButton(self.table_frame, text="Save CSV", command=lambda: save_csv_content(
-            file_path, simpledialog.askstring("Save CSV", "Enter a name for the CSV:"),
-            excluded_transactions=self.excluded_transactions))
+        self.save_button = ctk.CTkButton(self.table_frame, text="Save CSV",
+                                         command=lambda: save_csv(file_path,
+                                                                  simpledialog.askstring("Save CSV",
+                                                                                         "Enter a name for the CSV:"),
+                                                                  excluded_transactions=self.excluded_transactions))
         self.save_button.pack(pady=10)
 
-        self.back_button = ctk.CTkButton(self.table_frame, text="Back", command=self.handle_back)
+        self.back_button = ctk.CTkButton(self.table_frame, text="Back", command=self.create_widgets)
         self.back_button.pack(pady=10)
 
-    def handle_back(self):
-        self.reset_excluded_transactions()
-        self.create_widgets()
-
-    def reset_excluded_transactions(self):
-        self.excluded_transactions = []
+        self.update_totals_frame()
 
     def create_table(self, parent_frame, dataframe, table_type):
-        """Create a table for displaying transactions with inclusion/exclusion checkboxes."""
+        """
+        Creates a table for displaying transactions with inclusion/exclusion checkboxes.
+
+        Parameters:
+        parent_frame (Frame): The parent frame to contain the table.
+        dataframe (DataFrame): The DataFrame containing the transaction data.
+        table_type (str): Indicates whether the table is for 'Debits' or 'Credits'.
+        """
         columns = list(dataframe.columns)
         columns.append("Include")
 
@@ -476,7 +342,7 @@ class CSVViewerApp:
         tree.pack(expand=True, fill=ctk.BOTH)
 
         scrollbar = ttk.Scrollbar(parent_frame, orient="vertical", command=tree.yview)
-        tree.configure()
+        tree.configure(yscrollcommand=scrollbar.set)
         scrollbar.pack(side=ctk.RIGHT, fill=ctk.Y)
 
         for col in columns:
@@ -484,19 +350,18 @@ class CSVViewerApp:
             tree.column(col, anchor="center")
 
         if table_type == "Debits":
+            self.debits_tree = tree
             self.debits_check_vars = {}
             self.debits_tree_rows = {}
-            self.debits_tree = tree  # Save the reference to the debits TreeView
         else:
+            self.credits_tree = tree
             self.credits_check_vars = {}
             self.credits_tree_rows = {}
-            self.credits_tree = tree  # Save the reference to the credits TreeView
 
         for index, row in dataframe.iterrows():
             include_var = BooleanVar()
 
             values = tuple(row[col] for col in columns[:-1])
-
             unique_id = f"{table_type}_{uuid.uuid4()}"
             item_id = tree.insert("", "end", iid=unique_id, values=values)
 
@@ -510,16 +375,20 @@ class CSVViewerApp:
             transaction_type = 'Debit' if table_type == "Debits" else 'Credit'
             transaction = (row['Started Date'], row['Description'], transaction_type)
 
-            # Set initial state based on excluded_transactions
             include_var.set(transaction not in self.excluded_transactions)
             tree.set(item_id, "Include", "Included" if include_var.get() else "Excluded")
 
-        # Ensure that the tree is updated whenever the view is created
-        self.sync_tree_with_state(tree, table_type)
         tree.bind("<ButtonRelease-1>", lambda event: self.toggle_checkbox(tree, event, table_type))
 
     def toggle_checkbox(self, tree, event, table_type):
-        """Handle checkbox toggling for excluding/including transactions."""
+        """
+        Toggles the checkbox for including or excluding a transaction.
+
+        Parameters:
+        tree (ttk.Treeview): The tree view widget.
+        event: The event object from the tree view.
+        table_type (str): Indicates whether the table is for 'Debits' or 'Credits'.
+        """
         item_id = tree.identify_row(event.y)
         column = tree.identify_column(event.x)
         include_column_index = f"#{len(tree['columns'])}"
@@ -542,10 +411,16 @@ class CSVViewerApp:
                 tree.set(item_id, "Include", new_text)
 
                 self.toggle_transaction(row, include_var)
-
                 self.sync_tree_with_state(tree, table_type)
 
     def toggle_transaction(self, row, include_var):
+        """
+        Toggles the inclusion or exclusion of a transaction based on the checkbox state.
+
+        Parameters:
+        row (Series): The row of the DataFrame corresponding to the transaction.
+        include_var (BooleanVar): The variable controlling the inclusion/exclusion state.
+        """
         transaction_type = 'Debit' if pd.notna(row['Debit']) and pd.isna(row['Credit']) else 'Credit'
         transaction = (row['Started Date'], row['Description'], transaction_type)
         if include_var.get():
@@ -558,11 +433,18 @@ class CSVViewerApp:
         self.update_totals_frame()
 
     def sync_tree_with_state(self, tree, table_type):
+        """
+        Synchronizes the state of the UI tree view with the current transaction data.
+
+        Parameters:
+        tree (ttk.Treeview): The tree view widget to synchronize.
+        table_type (str): The type of data ('Debits' or 'Credits') being handled.
+        """
         check_vars = self.debits_check_vars if table_type == "Debits" else self.credits_check_vars
         tree_rows = self.debits_tree_rows if table_type == "Debits" else self.credits_tree_rows
+
         for item_id, include_var in check_vars.items():
             row = tree_rows[item_id]
-
             transaction_type = 'Debit' if pd.notna(row['Debit']) and pd.isna(row['Credit']) else 'Credit'
             transaction = (row['Started Date'], row['Description'], transaction_type)
 
@@ -572,22 +454,22 @@ class CSVViewerApp:
         self.update_totals_frame()
 
     def update_totals_frame(self):
+        """
+        Updates the totals frame with the current totals for debits, credits, and the ending balance.
+        """
         if self.df is None:
             return
 
-        # Ensure correct filtering of both debits and credits
-        remaining_df = self.df[~self.df.apply(lambda row: (row['Started Date'], row['Description'],
-                                                           'Debit' if pd.notna(row['Debit']) and pd.isna(row['Credit'])
-                                                           else 'Credit') in self.excluded_transactions, axis=1)]
+        remaining_df = self.df[~self.df.apply(lambda row: (
+                                                              row['Started Date'], row['Description'],
+                                                              'Debit' if pd.notna(row['Debit']) and pd.isna(
+                                                                  row['Credit']) else 'Credit'
+                                                          ) in self.excluded_transactions, axis=1)]
 
-        if not remaining_df.empty:
-            total_debits = remaining_df['Debit'].sum()
-            total_credits = remaining_df['Credit'].sum()
-            ending_balance = remaining_df['Balance'].iloc[-1] if 'Balance' in remaining_df.columns else 0
-        else:
-            total_debits = 0
-            total_credits = 0
-            ending_balance = 0
+        total_debits = remaining_df['Debit'].sum() if not remaining_df.empty else 0
+        total_credits = remaining_df['Credit'].sum() if not remaining_df.empty else 0
+        ending_balance = remaining_df['Balance'].iloc[
+            -1] if not remaining_df.empty and 'Balance' in remaining_df.columns else 0
 
         if hasattr(self, 'totals_frame'):
             self.totals_frame.destroy()
@@ -602,20 +484,22 @@ class CSVViewerApp:
         totals_label.pack(pady=10)
 
     def show_graph_frame(self, debits_df, credits_df, df, file_path):
-        """Display the graph view and synchronize the table with the current exclusion state."""
+        """
+        Displays the graph view and synchronizes the table with the current exclusion state.
+
+        Parameters:
+        debits_df (DataFrame): DataFrame containing debit transactions.
+        credits_df (DataFrame): DataFrame containing credit transactions.
+        df (DataFrame): The original DataFrame.
+        file_path (str): The path to the CSV file.
+        """
         self.clear_widgets()
 
-        # Create a set of excluded transactions using tuples
         excluded_set = set(tuple(t) for t in self.excluded_transactions)
 
-        # Use copies of the DataFrames to preserve original data
-        remaining_debits_df = debits_df.copy()
-        remaining_credits_df = credits_df.copy()
-
-        # Filter out excluded transactions from debits and credits
-        remaining_debits_df = remaining_debits_df[~remaining_debits_df.apply(
+        remaining_debits_df = debits_df[~debits_df.apply(
             lambda row: (row['Started Date'], row['Description'], 'Debit') in excluded_set, axis=1)]
-        remaining_credits_df = remaining_credits_df[~remaining_credits_df.apply(
+        remaining_credits_df = credits_df[~credits_df.apply(
             lambda row: (row['Started Date'], row['Description'], 'Credit') in excluded_set, axis=1)]
 
         self.graph_frame = ctk.CTkFrame(self.root)
@@ -643,11 +527,15 @@ class CSVViewerApp:
 
         self.plot_graphs(remaining_debits_df, remaining_credits_df, plot_type='debits')
 
-        self.graph_frame.update_idletasks()
-
-    # Ensure plot_graphs function now uses the passed filtered DataFrames
     def plot_graphs(self, debits_df, credits_df, plot_type):
-        """Plot the graphs using the filtered DataFrames."""
+        """
+        Plots the graphs using the filtered DataFrames.
+
+        Parameters:
+        debits_df (DataFrame): DataFrame containing debit transactions.
+        credits_df (DataFrame): DataFrame containing credit transactions.
+        plot_type (str): The type of plot ('debits' or 'credits').
+        """
         for widget in self.plot_frame.winfo_children():
             widget.destroy()
 
@@ -680,19 +568,23 @@ class CSVViewerApp:
         canvas.get_tk_widget().pack(side=ctk.TOP, fill=ctk.BOTH, expand=True)
 
     def show_saved_csvs(self):
+        """
+        Displays a list of saved CSVs for the user to select and load.
+        """
         self.clear_widgets()
 
         self.title_label = ctk.CTkLabel(self.root, text="Select a saved CSV file",
                                         font=("Helvetica", 30, "bold"))
-        self.title_label.pack(pady=10)  # Ensure this line is not missing or commented out.
+        self.title_label.pack(pady=10)
 
-        self.saved_csvs_frame = ctk.CTkFrame(self.root)
-        self.saved_csvs_frame.pack(padx=10, pady=10, expand=True, fill=ctk.BOTH)
+        # Create a scrollable frame to hold the list of saved CSVs
+        scrollable_frame = ctk.CTkScrollableFrame(self.root)
+        scrollable_frame.pack(padx=10, pady=10, expand=True, fill=ctk.BOTH)
 
         saved_csvs = load_saved_csvs()
         if saved_csvs:
             for name, info in saved_csvs.items():
-                frame = ctk.CTkFrame(self.saved_csvs_frame)
+                frame = ctk.CTkFrame(scrollable_frame)
                 frame.pack(pady=5, fill='x')
 
                 button = ctk.CTkButton(frame, text=name, command=lambda n=name: self.load_saved_csv(n))
@@ -701,21 +593,39 @@ class CSVViewerApp:
                 delete_button = ctk.CTkButton(frame, text="Delete", command=lambda n=name: self.confirm_delete(n))
                 delete_button.pack(side=ctk.RIGHT, padx=5, pady=5)
         else:
-            no_csv_label = ctk.CTkLabel(self.saved_csvs_frame, text="No saved CSV files found.")
+            no_csv_label = ctk.CTkLabel(scrollable_frame, text="No saved CSV files found.")
             no_csv_label.pack(pady=10)
 
         self.back_button = ctk.CTkButton(self.root, text="Back", command=self.create_widgets)
         self.back_button.pack(pady=10)
 
     def confirm_delete(self, name):
+        """
+        Confirms the deletion of a saved CSV file.
+
+        Parameters:
+        name (str): The name of the CSV file to delete.
+        """
         if messagebox.askokcancel("Delete", f"Do you really want to delete '{name}'?"):
             self.delete_csv(name)
 
     def delete_csv(self, name):
+        """
+        Deletes a saved CSV file and refreshes the saved CSVs view.
+
+        Parameters:
+        name (str): The name of the CSV file to delete.
+        """
         delete_saved_csv(name)
         self.show_saved_csvs()
 
     def load_saved_csv(self, name):
+        """
+        Loads a saved CSV file, restores excluded transactions, and synchronizes the UI with the data.
+
+        Parameters:
+        name (str): The name of the saved CSV file to load.
+        """
         try:
             saved_csvs = load_saved_csvs()
             if name in saved_csvs:
@@ -724,15 +634,78 @@ class CSVViewerApp:
                 self.excluded_transactions = [tuple(item) for item in file_info.get('excluded_transactions', [])]
 
                 df = pd.read_csv(file_path)
-                self.process_csv(df, file_path)
+                debits_df, credits_df, _ = process_csv(self, df)
 
-                self.sync_tree_with_state(self.debits_tree, "Debits")
-                self.sync_tree_with_state(self.credits_tree, "Credits")
+                self.show_text_frame(debits_df, credits_df, df, file_path)
             else:
                 messagebox.showerror("Error", f"CSV file '{name}' not found.")
         except Exception as e:
             messagebox.showerror("Error", f"Failed to load CSV file: {e}")
 
     def confirm_exit(self):
+        """
+        Confirms if the user wants to exit the application.
+        """
         if messagebox.askokcancel("Exit", "Do you really want to exit?"):
             self.root.quit()
+
+    def manage_categories(self):
+        """
+        Opens the category management interface.
+        """
+        manage_categories(self, self.create_widgets)
+
+    def select_csvs_for_comparison(self):
+        initiate_csv_selection(self.root, self.clear_widgets, self.add_csv_to_compare, self.create_widgets,
+                               self.confirm_delete)
+
+    def add_csv_to_compare(self, name):
+        append_csv_for_comparison(self, name, self.selected_csvs, retrieve_csv_data, self.run_csv_comparison,
+                                  process_csv,
+                                  load_saved_csvs)
+
+    def run_csv_comparison(self, selected_csvs):
+        results, file_name1, file_name2 = execute_csv_comparison(selected_csvs)
+        self.show_comparison_results(results, file_name1, file_name2)
+
+    def show_comparison_results(self, results, file_name1, file_name2):
+        create_comparison_results(self.root, self.clear_widgets, results, file_name1, file_name2, self.create_widgets,
+                                  self.show_comparison_summary)
+
+    def show_comparison_summary(self, results, file_name1, file_name2):
+
+        create_comparison_summary(self.root, self.clear_widgets, results, file_name1, file_name2, self.create_widgets)
+
+    def show_spending_summary(self, debits_df, credits_df):
+        """
+        Displays a summary of spending and income based on the processed data.
+
+        Parameters:
+        debits_df (DataFrame): DataFrame containing debit transactions.
+        credits_df (DataFrame): DataFrame containing credit transactions.
+        """
+        self.clear_widgets()
+
+        summary_frame = ctk.CTkFrame(self.root)
+        summary_frame.pack(padx=20, pady=20, expand=True, fill=ctk.BOTH)
+
+        title_label = ctk.CTkLabel(summary_frame, text="Spending & Income Summary",
+                                   font=("Helvetica", 40, "bold"), anchor="center")
+        title_label.grid(row=0, column=0, columnspan=2, pady=20)
+
+        # Pass excluded transactions to the summary calculation function
+        summary_data = calculate_summary(debits_df, credits_df, self.excluded_transactions)
+
+        # Display the summary
+        display_summary(summary_data, summary_frame)
+
+        button_frame = ctk.CTkFrame(summary_frame)
+        button_frame.grid(row=2, column=0, columnspan=2, pady=20)
+
+        self.back_button = ctk.CTkButton(button_frame, text="Back", font=("Helvetica", 18),
+                                         command=lambda: self.show_text_frame(debits_df, credits_df, self.df, ""))
+        self.back_button.pack(pady=10, side=ctk.LEFT)
+
+        summary_frame.grid_columnconfigure(0, weight=1)
+        summary_frame.grid_columnconfigure(1, weight=1)
+        summary_frame.grid_rowconfigure(1, weight=1)
